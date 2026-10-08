@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<title>iZeus Screens</title>
+<style>
+  * { box-sizing: border-box; font-family: 'Segoe UI', Arial, sans-serif; }
+  html, body { margin: 0; height: 100%; background: transparent; overflow: hidden; color: #eee; user-select: none; }
+  #app {
+    display: none; position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+    width: 760px; max-height: 640px; flex-direction: column; overflow: hidden;
+    background: #14111d; border: 1px solid #3a2f5c; border-radius: 14px; box-shadow: 0 10px 40px #000a;
+  }
+  .hd { display: flex; justify-content: space-between; align-items: center; padding: 14px 18px; background: #1d1830; font-size: 17px; }
+  .x { background: none; border: 0; color: #aaa; font-size: 18px; cursor: pointer; }
+  .x:hover { color: #fff; }
+  .tabs { display: flex; gap: 6px; padding: 10px 14px 0; }
+  .tabs button { flex: 1; padding: 10px; border: 0; border-radius: 8px 8px 0 0; background: #1d1830; color: #aaa; cursor: pointer; font-size: 14px; }
+  .tabs button.on { background: #7c4dff; color: #fff; }
+  .body { padding: 16px; overflow-y: auto; min-height: 300px; border-top: 2px solid #7c4dff; }
+  .row { display: flex; gap: 8px; margin-bottom: 12px; align-items: center; flex-wrap: wrap; }
+  input[type=text] { flex: 1; min-width: 200px; padding: 10px 12px; border-radius: 8px; border: 1px solid #3a2f5c; background: #0e0b16; color: #fff; outline: none; }
+  input[type=text]:focus { border-color: #7c4dff; }
+  input[type=range] { accent-color: #7c4dff; width: 160px; }
+  button.b { padding: 9px 14px; border: 0; border-radius: 8px; background: #7c4dff; color: #fff; cursor: pointer; font-size: 13px; }
+  button.b:hover { background: #926bff; }
+  button.b.g { background: #2b2445; }
+  button.b.g:hover { background: #3a3060; }
+  button.b.r { background: #8b2b3a; }
+  .card { background: #1a1528; border: 1px solid #2b2445; border-radius: 10px; padding: 10px 12px; margin-bottom: 10px; }
+  .card .top { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+  .vid { display: flex; justify-content: space-between; gap: 8px; padding: 5px 0; border-bottom: 1px solid #241d38; font-size: 13px; }
+  .vid span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .dim { color: #8c84a8; font-size: 13px; }
+  .badge { padding: 2px 8px; border-radius: 10px; font-size: 12px; background: #2b2445; }
+  .badge.on { background: #1f6b43; }
+  .msg { padding: 8px 16px; background: #5a1f2b; font-size: 13px; }
+  .chk { display: flex; gap: 8px; align-items: center; font-size: 13px; margin-bottom: 12px; color: #cbb8ff; }
+</style>
+</head>
+<body>
+<div id="app"></div>
+
+<script>
+const RES = typeof GetParentResourceName === 'function' ? GetParentResourceName() : 'izeus_screens';
+const post = (n, d) => fetch(`https://${RES}/${n}`, {
+  method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(d || {})
+}).then(r => r.json()).catch(() => ({}));
+const $ = s => document.querySelector(s);
+
+// crea elementos con textContent (los títulos vienen de internet: nunca innerHTML)
+const h = (t, a, ...c) => {
+  const e = document.createElement(t);
+  for (const k in (a || {})) {
+    if (k === 'class') e.className = a[k];
+    else if (k.startsWith('on')) e.addEventListener(k.slice(2), a[k]);
+    else if (k === 'value' || k === 'checked') e[k] = a[k];
+    else e.setAttribute(k, a[k]);
+  }
+  c.flat().forEach(x => e.append(x instanceof Node ? x : document.createTextNode(x == null ? '' : x)));
+  return e;
+};
+
+let D = null, S = {}, tab = 'play', sync = true, msg = '';
+const draft = { link: '', newList: '', add: {}, imp: {} };
+const opened = {}, confirmDel = {};
+
+window.addEventListener('message', e => {
+  const m = e.data;
+  if (m.action === 'open') {
+    D = m.data; S = D.states || {}; tab = 'play'; msg = '';
+    $('#app').style.display = 'flex'; render();
+  } else if (m.action === 'state' && D) {
+    S[m.id] = m.state;
+    const f = document.activeElement;
+    if (!f || f.tagName !== 'INPUT') render();
+  }
+});
+document.addEventListener('keyup', e => { if (e.key === 'Escape' && D) close(); });
+
+function close() {
+  $('#app').style.display = 'none'; D = null; post('close');
+}
+
+const ctl = (action, data, screenId, useSync) =>
+  post('control', { screenId: screenId || D.screen.id, action, data, sync: useSync === undefined ? sync : useSync });
+
+function plOp(op, data) {
+  return post('playlist', { screenId: D.screen.id, op, data }).then(r => {
+    if (r.playlists) D.playlists = r.playlists;
+    msg = r.ok ? '' : (r.error || 'Error');
+    render();
+    return r;
+  });
+}
+
+function render() {
+  if (!D) return;
+  const tabs = [['play', 'Reproducir'], ['lists', 'Listas'], ['screens', 'Pantallas']];
+  $('#app').replaceChildren(
+    h('div', { class: 'hd' }, h('b', {}, D.screen.label), h('button', { class: 'x', onclick: close }, '✕')),
+    h('div', { class: 'tabs' }, tabs.map(([k, l]) =>
+      h('button', { class: tab === k ? 'on' : '', onclick: () => { tab = k; render(); } }, l))),
+    h('div', { class: 'body' }, tab === 'play' ? viewPlay() : tab === 'lists' ? viewLists() : viewScreens()),
+    msg ? h('div', { class: 'msg' }, msg) : ''
+  );
+}
+
+// ---------- Reproducir ----------
+function viewPlay() {
+  const st = S[D.screen.id] || {}, c = D.can;
+  const status = !st.on ? 'Apagada' : st.mode ? (st.paused ? 'En pausa' : 'Reproduciendo') : 'Encendida (sin contenido)';
+
+  const playVideo = () => {
+    const m = draft.link.match(/youtu\.be\/([\w-]{11})|[?&]v=([\w-]{11})|\/(?:embed|shorts|live)\/([\w-]{11})/) || draft.link.trim().match(/^([\w-]{11})$/);
+    const id = m && (m[1] || m[2] || m[3]);
+    if (!id) { msg = 'Enlace de video no válido.'; return render(); }
+    msg = ''; ctl('play', { mode: 'video', id });
+  };
+  const playList = () => {
+    const m = draft.link.match(/[?&]list=([\w-]+)/);
+    if (!m) { msg = 'El enlace no contiene una playlist (list=...).'; return render(); }
+    msg = ''; ctl('play', { mode: 'playlist', id: m[1] });
+  };
+
+  return h('div', {},
+    h('div', { class: 'row' }, h('span', { class: 'badge ' + (st.on ? 'on' : '') }, status)),
+    c.changeVideo ? h('div', { class: 'row' },
+      h('input', { type: 'text', placeholder: 'Pega el enlace de YouTube', value: draft.link, oninput: e => draft.link = e.target.value }),
+      h('button', { class: 'b', onclick: playVideo }, '▶ Video'),
+      h('button', { class: 'b g', onclick: playList }, '▶ Playlist de YouTube')) : '',
+    D.canSync ? h('label', { class: 'chk' },
+      h('input', { type: 'checkbox', checked: sync, onchange: e => { sync = e.target.checked; } }),
+      'Sincronizar con las pantallas cercanas') : '',
+    h('div', { class: 'row' },
+      c.pauseResume ? h('button', { class: 'b g', onclick: () => ctl(st.paused ? 'resume' : 'pause') }, st.paused ? '▶ Reanudar' : '⏸ Pausar') : '',
+      c.pauseResume ? h('button', { class: 'b g', onclick: () => ctl('stop') }, '⏹ Detener') : '',
+      c.pauseResume ? h('button', { class: 'b ' + (st.on ? 'r' : ''), onclick: () => ctl('power', !st.on, null, false) }, st.on ? '⏻ Apagar' : '⏻ Encender') : ''),
+    c.mute ? h('div', { class: 'row' },
+      h('button', { class: 'b g', onclick: () => ctl('mute', !st.muted, null, false) }, st.muted ? '🔇 Muteada' : '🔊 Sonido'),
+      h('input', { type: 'range', min: 0, max: D.maxVolume, value: st.volume == null ? 50 : st.volume,
+        onchange: e => ctl('volume', +e.target.value, null, false) }),
+      h('span', { class: 'dim' }, 'Volumen')) : '');
+}
+
+// ---------- Listas ----------
+function viewLists() {
+  const c = D.can, pl = D.playlists || [];
+  return h('div', {},
+    c.managePlaylists ? h('div', { class: 'row' },
+      h('input', { type: 'text', placeholder: 'Nombre de la nueva lista', value: draft.newList, oninput: e => draft.newList = e.target.value }),
+      h('button', { class: 'b', onclick: () => { const n = draft.newList; draft.newList = ''; plOp('create', { name: n }); } }, '+ Crear lista')) : '',
+    pl.length ? pl.map(card) : h('p', { class: 'dim' }, 'No hay listas todavía.'));
+}
+
+function card(p) {
+  const c = D.can, vids = p.videos || [], isOpen = !!opened[p.id];
+  return h('div', { class: 'card' },
+    h('div', { class: 'top' },
+      h('b', {}, p.name, h('span', { class: 'dim' }, `  (${vids.length})`)),
+      h('div', { class: 'row', style: 'margin:0' },
+        c.changeVideo && vids.length ? h('button', { class: 'b', onclick: () => ctl('play', { mode: 'queue', listId: p.id }) }, '▶') : '',
+        h('button', { class: 'b g', onclick: () => { opened[p.id] = !isOpen; render(); } }, isOpen ? '▴' : '▾'),
+        c.managePlaylists ? h('button', { class: 'b r', onclick: () => {
+          if (!confirmDel[p.id]) { confirmDel[p.id] = true; render(); return; }
+          delete confirmDel[p.id]; plOp('delete', { id: p.id });
+        } }, confirmDel[p.id] ? '¿Seguro?' : '🗑') : '')),
+    isOpen ? h('div', { style: 'margin-top:10px' },
+      vids.map((v, i) => h('div', { class: 'vid' },
+        h('span', {}, `${i + 1}. ${v.title || v.id}`),
+        c.managePlaylists ? h('button', { class: 'x', onclick: () => plOp('removeVideo', { id: p.id, index: i + 1 }) }, '✕') : '')),
+      c.managePlaylists ? h('div', { class: 'row', style: 'margin-top:10px' },
+        h('input', { type: 'text', placeholder: 'Enlace del video a agregar', value: draft.add[p.id] || '', oninput: e => draft.add[p.id] = e.target.value }),
+        h('button', { class: 'b', onclick: () => { const u = draft.add[p.id]; draft.add[p.id] = ''; plOp('addVideo', { id: p.id, url: u }); } }, '+ Agregar')) : '',
+      c.managePlaylists && D.hasApiKey ? h('div', { class: 'row' },
+        h('input', { type: 'text', placeholder: 'Enlace de playlist de YouTube a importar', value: draft.imp[p.id] || '', oninput: e => draft.imp[p.id] = e.target.value }),
+        h('button', { class: 'b g', onclick: () => { const u = draft.imp[p.id]; draft.imp[p.id] = ''; plOp('import', { id: p.id, url: u }); } }, 'Importar')) : ''
+    ) : '');
+}
+
+// ---------- Pantallas ----------
+function viewScreens() {
+  const c = D.can;
+  return h('div', {},
+    D.screen.business && c.powerAll ? h('div', { class: 'row' },
+      h('button', { class: 'b', onclick: () => ctl('powerAll', true, null, false) }, '⏻ Encender todas'),
+      h('button', { class: 'b r', onclick: () => ctl('powerAll', false, null, false) }, '⏻ Apagar todas')) : '',
+    D.screens.map(s => {
+      const st = S[s.id] || {};
+      return h('div', { class: 'card' },
+        h('div', { class: 'top' },
+          h('div', {}, h('b', {}, s.label), '  ', h('span', { class: 'badge ' + (st.on ? 'on' : '') }, st.on ? 'Encendida' : 'Apagada')),
+          h('div', { class: 'row', style: 'margin:0' },
+            c.pauseResume ? h('button', { class: 'b g', onclick: () => ctl('power', !st.on, s.id, false) }, '⏻') : '',
+            h('button', { class: 'b g', onclick: () => ctl('mute', !st.muted, s.id, false) }, st.muted ? '🔇' : '🔊'),
+            h('input', { type: 'range', min: 0, max: D.maxVolume, value: st.volume == null ? 50 : st.volume,
+              onchange: e => ctl('volume', +e.target.value, s.id, false) }))));
+    }));
+}
+</script>
+</body>
+</html>

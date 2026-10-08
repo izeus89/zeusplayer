@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>iZeus Screens Player</title>
+<style>
+  html, body { margin: 0; width: 100%; height: 100%; background: #000; overflow: hidden; }
+  #p { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
+  #idle {
+    position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center;
+    background: radial-gradient(circle at 50% 40%, #2a1b4d, #07050d 70%); color: #cbb8ff;
+    font-family: Arial, sans-serif; pointer-events: none;
+  }
+  #idle b { font-size: 64px; letter-spacing: 4px; }
+  #idle span { font-size: 24px; opacity: .6; margin-top: 10px; }
+</style>
+</head>
+<body>
+<div id="p"></div>
+<div id="idle"><b>iZeus Screens</b><span>Sin reproducción</span></div>
+
+<script src="https://www.youtube.com/iframe_api"></script>
+<script>
+const RES = new URLSearchParams(location.search).get('res') || 'izeus_screens';
+const idle = document.getElementById('idle');
+
+let player = null, ready = false, pending = null;
+let cur = null, mode = null, screenId = null, lastIdx = -1, vol = 0, wantPause = false;
+
+function report(type, index) {
+  if (!screenId) return;
+  fetch('https://' + RES + '/duiEvent', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ screenId: screenId, type: type, index: index })
+  }).catch(function () {});
+}
+
+window.onYouTubeIframeAPIReady = function () {
+  const vars = { autoplay: 1, controls: 0, disablekb: 1, rel: 0, modestbranding: 1, iv_load_policy: 3, playsinline: 1, fs: 0 };
+  if (location.protocol.indexOf('http') === 0) vars.origin = location.origin;
+  player = new YT.Player('p', {
+    width: '100%', height: '100%', playerVars: vars,
+    events: {
+      onReady: function () {
+        ready = true;
+        player.setVolume(vol);
+        if (pending) { const m = pending; pending = null; handle(m); }
+      },
+      onStateChange: onState,
+      onError: function (e) { report('error', e.data); }
+    }
+  });
+};
+
+function onState(e) {
+  if (e.data === 1) { // PLAYING
+    if (wantPause) { player.pauseVideo(); return; }
+    if (mode && mode !== 'video') {
+      const i = player.getPlaylistIndex();
+      if (i >= 0 && i !== lastIdx) { lastIdx = i; report('index', i); }
+    }
+  } else if (e.data === 0 && mode === 'video') { // ENDED
+    player.stopVideo();
+  }
+}
+
+function handle(m) {
+  if (m.action === 'volume') {
+    vol = m.value;
+    if (ready) player.setVolume(vol);
+    return;
+  }
+  if (m.action !== 'load') return;
+  if (!ready) { pending = m; return; }
+
+  screenId = m.screenId;
+
+  if (!m.mode) {
+    mode = null; cur = null; wantPause = false;
+    player.stopVideo();
+    idle.style.display = 'flex';
+    return;
+  }
+
+  idle.style.display = 'none';
+  wantPause = !!m.paused;
+  const start = m.start || 0;
+
+  if (cur !== m.nonce) {            // contenido nuevo
+    cur = m.nonce; mode = m.mode; lastIdx = -1;
+    if (m.mode === 'video') {
+      player.loadVideoById({ videoId: m.source, startSeconds: start });
+    } else if (m.mode === 'playlist') {
+      player.loadPlaylist({ listType: 'playlist', list: m.source, index: m.index || 0, startSeconds: start });
+      player.setLoop(m.loop !== false);
+    } else {
+      player.loadPlaylist({ playlist: m.source, index: m.index || 0, startSeconds: start });
+      player.setLoop(m.loop !== false);
+    }
+  } else {                          // mismo contenido: solo re-sincronizar
+    if (mode !== 'video' && player.getPlaylistIndex() !== m.index) {
+      player.playVideoAt(m.index);
+    } else if (Math.abs(player.getCurrentTime() - start) > 3) {
+      player.seekTo(start, true);
+    }
+    if (m.paused) player.pauseVideo(); else player.playVideo();
+  }
+}
+
+window.addEventListener('message', function (e) {
+  if (e.data && e.data.action) handle(e.data);
+});
+</script>
+</body>
+</html>
